@@ -9,7 +9,32 @@
         :key="trainee.id"
         class="schedule-row"
       >
-        <span class="name">{{ trainee.name }}</span>
+        <div class="trainee-info">
+          <span class="name">{{ trainee.name }}</span>
+          <div v-if="getEffect(trainee.id)" class="synergy-tags">
+            <span
+              v-if="getEffect(trainee.id).restBonus === 'wellRested'"
+              class="synergy-tag good"
+              title="精力充沛，训练效果+12%"
+            >
+              ✨+12%
+            </span>
+            <span
+              v-else-if="getEffect(trainee.id).restBonus === 'exhausted'"
+              class="synergy-tag bad"
+              title="疲惫不堪，训练效果-18%"
+            >
+              😵-18%
+            </span>
+            <span
+              v-if="getEffect(trainee.id).harmoniousBonus"
+              class="synergy-tag good"
+              title="舍友默契，训练效果+8%"
+            >
+              🤝+8%
+            </span>
+          </div>
+        </div>
         <span v-if="trainee.illnessDays > 0" class="ill-tag">休养中</span>
         <div v-else class="activity-btns">
           <button
@@ -53,6 +78,7 @@ const props = defineProps({
   trainees: Array,
   schedule: Object,
   canEnd: Boolean,
+  dormEffects: { type: Object, default: null },
 })
 
 defineEmits(['set', 'clear', 'end-day'])
@@ -62,6 +88,11 @@ const activities = GAME_CONFIG.activities
 const schedulable = computed(() =>
   props.trainees.filter((t) => t.status !== 'left')
 )
+
+function getEffect(id) {
+  if (!props.dormEffects) return null
+  return props.dormEffects[id]
+}
 </script>
 
 <style scoped>
@@ -87,10 +118,39 @@ const schedulable = computed(() =>
   flex-wrap: wrap;
 }
 
+.trainee-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 100px;
+}
+
 .name {
-  width: 72px;
   font-weight: 600;
   font-size: 0.9rem;
+}
+
+.synergy-tags {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.synergy-tag {
+  font-size: 0.65rem;
+  padding: 0.05rem 0.3rem;
+  border-radius: 3px;
+  font-weight: 700;
+}
+
+.synergy-tag.good {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.synergy-tag.bad {
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .activity-btns {

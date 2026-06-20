@@ -1,6 +1,6 @@
 <template>
   <div class="day-log card">
-    <h3>📋 事务所日志</h3>
+    <h3>📋 {{ filter ? '宿舍日志' : '事务所日志' }}</h3>
     <div class="log-list" ref="logRef">
       <div
         v-for="(log, i) in recentLogs"
@@ -9,6 +9,9 @@
       >
         <span class="log-day">D{{ log.day }}</span>
         <span class="log-text">{{ log.text }}</span>
+      </div>
+      <div v-if="recentLogs.length === 0" class="empty-log">
+        暂无相关日志
       </div>
     </div>
   </div>
@@ -19,11 +22,18 @@ import { computed, ref, watch, nextTick } from 'vue'
 
 const props = defineProps({
   logs: Array,
+  filter: { type: Function, default: null },
 })
 
 const logRef = ref(null)
 
-const recentLogs = computed(() => [...(props.logs || [])].reverse().slice(0, 30))
+const recentLogs = computed(() => {
+  let list = [...(props.logs || [])]
+  if (props.filter) {
+    list = list.filter(props.filter)
+  }
+  return list.reverse().slice(0, 30)
+})
 
 watch(() => props.logs?.length, async () => {
   await nextTick()
@@ -57,4 +67,12 @@ watch(() => props.logs?.length, async () => {
 }
 
 .log-text { color: var(--text-secondary); }
+
+.empty-log {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  font-style: italic;
+  text-align: center;
+  padding: 1rem 0;
+}
 </style>

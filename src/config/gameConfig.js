@@ -200,4 +200,76 @@ export const GAME_CONFIG = {
     themeKey: 'idol-agency-theme',
     maxSlots: 5,
   },
+
+  // ── 宿舍管理 ──
+  dormitory: {
+    baseRooms: 4,
+    maxPerRoom: 2,
+    roomCost: 1500,
+    qualityLevels: {
+      basic: { label: '标准间', fatigueRecovery: [0, 2], stressRecovery: [0, 1], relationshipBonus: 0 },
+      premium: { label: '豪华间', fatigueRecovery: [2, 5], stressRecovery: [1, 3], relationshipBonus: 2 },
+      vip: { label: 'VIP间', fatigueRecovery: [5, 9], stressRecovery: [3, 6], relationshipBonus: 4 },
+    },
+    // 同住事件
+    roommateEvents: {
+      dailyChance: 0.25,
+      types: {
+        late_night_chat: {
+          label: '深夜谈心',
+          weight: 25,
+          relGain: [5, 10],
+          fatigueCost: [3, 6],
+          stressGain: [-4, -1],
+          description: '两人彻夜长谈，感情升温。',
+        },
+        mutual_encouragement: {
+          label: '互相鼓励',
+          weight: 22,
+          relGain: [3, 7],
+          stressGain: [-5, -2],
+          fatigueCost: [0, 2],
+          description: '室友在训练受挫时给予鼓励。',
+        },
+        practice_together: {
+          label: '睡前加练',
+          weight: 18,
+          relGain: [4, 8],
+          fatigueCost: [5, 10],
+          statBoostRange: [1, 3],
+          description: '两人在宿舍里偷偷加练。',
+        },
+        gossip_session: {
+          label: '八卦时间',
+          weight: 15,
+          relGain: [2, 5],
+          stressGain: [-3, 0],
+          fatigueCost: [2, 4],
+          description: '两人分享圈内八卦，心情愉悦。',
+        },
+        conflict_noise: {
+          label: '作息冲突',
+          weight: 12,
+          relGain: [-8, -3],
+          fatigueCost: [5, 10],
+          stressGain: [3, 7],
+          description: '室友作息不合，产生摩擦。',
+        },
+        stolen_snacks: {
+          label: '零食风波',
+          weight: 8,
+          relGain: [-5, -1],
+          stressGain: [2, 5],
+          fatigueCost: [1, 3],
+          description: '偷吃了室友的零食，关系恶化。',
+        },
+      },
+    },
+    // 恢复效果与次日日程联动
+    scheduleSynergy: {
+      wellRestedBonus: 0.12,
+      exhaustedPenalty: 0.18,
+      harmoniousRoommateBonus: 0.08,
+    },
+  },
 }

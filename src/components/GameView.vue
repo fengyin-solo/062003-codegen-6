@@ -9,6 +9,23 @@
       @toggle-theme="$emit('toggle-theme')"
     />
 
+    <div class="tabs-nav">
+      <button
+        class="tab-btn"
+        :class="{ active: activeTab === 'training' }"
+        @click="activeTab = 'training'"
+      >
+        📅 训练日程
+      </button>
+      <button
+        class="tab-btn"
+        :class="{ active: activeTab === 'dormitory' }"
+        @click="activeTab = 'dormitory'"
+      >
+        🏠 宿舍管理
+      </button>
+    </div>
+
     <div class="game-body">
       <aside class="sidebar">
         <div class="trainee-grid">
@@ -17,20 +34,36 @@
             :key="t.id"
             :trainee="t"
             :score="calcScore(t)"
+            :dorm-room="getDormRoom(t.id)"
+            :dorm-effects="state.dormEffects"
           />
         </div>
       </aside>
 
       <main class="main-panel">
-        <SchedulePanel
-          :trainees="activeTrainees"
-          :schedule="state.schedule"
-          :can-end="canEndDay"
-          @set="(id, act) => $emit('set-schedule', id, act)"
-          @clear="$emit('clear-schedule')"
-          @end-day="$emit('end-day')"
-        />
-        <DayLog :logs="state.logs" />
+        <template v-if="activeTab === 'training'">
+          <SchedulePanel
+            :trainees="activeTrainees"
+            :schedule="state.schedule"
+            :can-end="canEndDay"
+            :dorm-effects="state.dormEffects"
+            @set="(id, act) => $emit('set-schedule', id, act)"
+            @clear="$emit('clear-schedule')"
+            @end-day="$emit('end-day')"
+          />
+          <DayLog :logs="state.logs" />
+        </template>
+        <template v-else-if="activeTab === 'dormitory'">
+          <DormitoryPanel
+            :dormitory="state.dormitory"
+            :trainees="state.trainees"
+            :money="state.money"
+            @assign-room="onAssignRoom"
+            @upgrade-room="(id, q) => $emit('upgrade-room', id, q)"
+            @add-room="(q) => $emit('add-room', q)"
+          />
+          <DayLog :logs="state.logs" :filter="dormLogFilter" />
+        </template>
       </main>
 
       <aside class="right-panel">
@@ -87,6 +120,7 @@ import SchedulePanel from './SchedulePanel.vue'
 import DayLog from './DayLog.vue'
 import GroupsPanel from './GroupsPanel.vue'
 import RelationshipPanel from './RelationshipPanel.vue'
+import DormitoryPanel from './DormitoryPanel.vue'
 import RatingModal from './RatingModal.vue'
 import DebutModal from './DebutModal.vue'
 import EventModal from './EventModal.vue'
@@ -113,22 +147,52 @@ const emit = defineEmits([
   'debut',
   'resolve-poaching',
   'release-single',
+  'assign-room',
+  'upgrade-room',
+  'add-room',
 ])
 
 const showDebut = ref(false)
 const toast = ref('')
+const activeTab = ref('training')
+
+function dormLogFilter(log) {
+  return /🏠|🏨|🛏️|🏗️|宿舍|房间|室友|同住/.test(log.text)
+}
+
+function getDormRoom(traineeId) {
+  if (!props.state?.dormitory) return null
+  return props.state.dormitory.find((r) => r.occupantIds.includes(traineeId))
+}
+
+function onAssignRoom(traineeId, roomId) {
+  if (roomId === '') {
+    const unassignedRoom = props.state.dormitory.find(
+      (r) => r.occupantIds.length < 2 && !r.occupantIds.includes(traineeId)
+    )
+    if (unassignedRoom) {
+      emit('assign-room', traineeId, unassignedRoom.id)
+      showToastMsg('练习生已重新分配至空房')
+    }
+  } else {
+    emit('assign-room', traineeId, roomId)
+  }
+}
 
 function onDebut(memberIds, groupName) {
   emit('debut', memberIds, groupName, (result) => {
     if (result?.success) {
       showDebut.value = false
-      toast.value = '出道成功！'
-      setTimeout(() => { toast.value = '' }, 2500)
+      showToastMsg('出道成功！')
     } else if (result?.message) {
-      toast.value = result.message
-      setTimeout(() => { toast.value = '' }, 3000)
+      showToastMsg(result.message)
     }
   })
+}
+
+function showToastMsg(msg) {
+  toast.value = msg
+  setTimeout(() => { toast.value = '' }, 2500)
 }
 </script>
 
@@ -137,6 +201,36 @@ function onDebut(memberIds, groupName) {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+}
+
+.tabs-nav {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card);
+}
+
+.tab-btn {
+  padding: 0.75rem 1.25rem;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+  font-family: inherit;
+  font-weight: 500;
+}
+
+.tab-btn:hover {
+  color: var(--text-secondary);
+}
+
+.tab-btn.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
 }
 
 .game-body {

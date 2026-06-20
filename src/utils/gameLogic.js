@@ -24,6 +24,8 @@ export function createInitialGameState() {
     pendingRating: false,
     gameStatus: 'playing',
     lastSingleDay: {},
+    dormitory: initDormitory(trainees),
+    dormEffects: {},
   }
 }
 
@@ -119,7 +121,7 @@ function applyRange(val, range, mult = 1) {
   return val + randInt(Math.round(range[0] * mult), Math.round(range[1] * mult))
 }
 
-function getTrainingMultiplier(trainee, partners, relationships) {
+function getTrainingMultiplier(trainee, partners, relationships, dormEffects) {
   let mult = 1
   if (trainee.fatigue >= CFG.thresholds.fatigueExhausted) mult *= 0.5
   if (trainee.stress >= CFG.thresholds.stressHigh) mult *= 0.8
@@ -133,6 +135,19 @@ function getTrainingMultiplier(trainee, partners, relationships) {
   if (synergyCount > 0) {
     mult *= 1 + CFG.relationships.synergyBonus * Math.min(synergyCount, 2)
   }
+
+  if (dormEffects && dormEffects[trainee.id]) {
+    const eff = dormEffects[trainee.id]
+    if (eff.restBonus === 'wellRested') {
+      mult *= 1 + DORM_CFG.scheduleSynergy.wellRestedBonus
+    } else if (eff.restBonus === 'exhausted') {
+      mult *= 1 - DORM_CFG.scheduleSynergy.exhaustedPenalty
+    }
+    if (eff.harmoniousBonus) {
+      mult *= 1 + DORM_CFG.scheduleSynergy.harmoniousRoommateBonus
+    }
+  }
+
   return mult
 }
 
@@ -144,6 +159,7 @@ export function processDay(state) {
   const relationships = { ...state.relationships }
   const trainees = state.trainees.map((t) => ({ ...t, stats: { ...t.stats } }))
   const schedule = state.schedule
+  const dormEffects = state.dormEffects || {}
 
   const activityGroups = {}
   for (const [traineeId, activity] of Object.entries(schedule)) {
@@ -185,7 +201,7 @@ export function processDay(state) {
       .map((id) => trainees.find((t) => t.id === id))
       .filter(Boolean)
 
-    const mult = getTrainingMultiplier(trainee, partners, relationships)
+    const mult = getTrainingMultiplier(trainee, partners, relationships, dormEffects)
 
     if (activity.requiresTraining && trainee.stress >= CFG.thresholds.stressBreakdown) {
       logs.push({ day: state.day, text: `${trainee.name} 压力过大，无法集中精力训练。` })
@@ -265,6 +281,17 @@ export function processDay(state) {
   money -= dailyCost
   totalExpenses += dailyCost
 
+  const dormitory = state.dormitory ? state.dormitory.map((r) => ({ ...r, occupantIds: [...r.occupantIds] })) : []
+
+  for (const room of dormitory) {
+    const evt = generateRoommateEvent(room, trainees, relationships, state.day)
+    if (evt) {
+      applyRoommateEvent(evt, trainees, relationships, logs, state.day)
+    }
+  }
+
+  const newDormEffects = applyDormitoryRecovery(trainees, dormitory, logs, state.day)
+
   const newDay = state.day + 1
   const pendingRating = state.day % CFG.rating.interval === 0
 
@@ -323,6 +350,8 @@ export function processDay(state) {
     logs: [...state.logs, ...logs],
     pendingEvent,
     pendingRating,
+    dormitory,
+    dormEffects: newDormEffects,
   }
 
   const result = checkVictory(nextState)
@@ -554,4 +583,359 @@ export function getRatingResults(state) {
       canDebut: calcTraineeScore(t) >= CFG.rating.debutScoreThreshold,
     }))
     .sort((a, b) => b.score - a.score)
+}
+
+const DORM_CFG = GAME_CONFIG.dormitory
+
+export function initDormitory(trainees) {
+  const rooms = []
+  for (let i = 0; i < DORM_CFG.baseRooms; i++) {
+    rooms.push({
+      id: `room_${i}`,
+      name: `${i + 1}号房`,
+      quality: 'basic',
+      occupantIds: [],
+    })
+  }
+  const active = trainees.filter((t) => t.status !== 'left')
+  for (let i = 0; i < active.length; i++) {
+    const roomIdx = Math.floor(i / DORM_CFG.maxPerRoom)
+    if (rooms[roomIdx]) {
+      rooms[roomIdx].occupantIds.push(active[i].id)
+    }
+  }
+  return rooms
+}
+
+export function getRoommates(dormitory, traineeId) {
+  const room = dormitory.find((r) => r.occupantIds.includes(traineeId))
+  if (!room) return []
+  return room.occupantIds.filter((id) => id !== traineeId)
+}
+
+export function getTraineeRoom(dormitory, traineeId) {
+  return dormitory.find((r) => r.occupantIds.includes(traineeId)) || null
+}
+
+export function assignRoom(state, traineeId, roomId) {
+  const dormitory = state.dormitory.map((r) => ({ ...r, occupantIds: [...r.occupantIds] }))
+  const logs = [...state.logs]
+  const trainees = state.trainees.map((t) => ({ ...t, stats: { ...t.stats } }))
+
+  const targetRoom = dormitory.find((r) => r.id === roomId)
+  if (!targetRoom) {
+    return { success: false, message: '房间不存在', state }
+  }
+
+  const currentRoom = dormitory.find((r) => r.occupantIds.includes(traineeId))
+  const trainee = trainees.find((t) => t.id === traineeId)
+
+  if (currentRoom && currentRoom.id === roomId) {
+    return { success: false, message: `${trainee.name} 已在此房间`, state }
+  }
+
+  if (targetRoom.occupantIds.length >= DORM_CFG.maxPerRoom) {
+    return { success: false, message: '房间已满', state }
+  }
+
+  if (currentRoom) {
+    currentRoom.occupantIds = currentRoom.occupantIds.filter((id) => id !== traineeId)
+  }
+  targetRoom.occupantIds.push(traineeId)
+
+  const roommateIds = targetRoom.occupantIds.filter((id) => id !== traineeId)
+  const roommates = roommateIds.map((id) => trainees.find((t) => t.id === id)).filter(Boolean)
+
+  if (roommates.length > 0) {
+    logs.push({
+      day: state.day,
+      text: `🏠 ${trainee.name} 搬入${targetRoom.name}，与 ${roommates.map((r) => r.name).join('、')} 成为室友。`,
+    })
+  } else {
+    logs.push({
+      day: state.day,
+      text: `🏠 ${trainee.name} 搬入${targetRoom.name}独居。`,
+    })
+  }
+
+  return {
+    success: true,
+    state: { ...state, dormitory, logs, trainees },
+  }
+}
+
+export function upgradeRoom(state, roomId, newQuality) {
+  const qualityLevels = Object.keys(DORM_CFG.qualityLevels)
+  if (!qualityLevels.includes(newQuality)) {
+    return { success: false, message: '房间等级无效', state }
+  }
+
+  const dormitory = state.dormitory.map((r) => ({ ...r }))
+  const room = dormitory.find((r) => r.id === roomId)
+  if (!room) {
+    return { success: false, message: '房间不存在', state }
+  }
+
+  const currentIdx = qualityLevels.indexOf(room.quality)
+  const targetIdx = qualityLevels.indexOf(newQuality)
+  if (targetIdx <= currentIdx) {
+    return { success: false, message: '只能升级到更高等级', state }
+  }
+
+  const upgradeCost = DORM_CFG.roomCost * (targetIdx - currentIdx)
+  if (state.money < upgradeCost) {
+    return { success: false, message: `资金不足，需 ¥${upgradeCost}`, state }
+  }
+
+  room.quality = newQuality
+  const oldLabel = DORM_CFG.qualityLevels[qualityLevels[currentIdx]].label
+  const newLabel = DORM_CFG.qualityLevels[newQuality].label
+
+  const logs = [
+    ...state.logs,
+    {
+      day: state.day,
+      text: `🛏️ ${room.name} 从${oldLabel}升级为${newLabel}，花费 ¥${upgradeCost}。`,
+    },
+  ]
+
+  return {
+    success: true,
+    state: {
+      ...state,
+      dormitory,
+      logs,
+      money: state.money - upgradeCost,
+      totalExpenses: state.totalExpenses + upgradeCost,
+    },
+  }
+}
+
+export function addRoom(state, quality = 'basic') {
+  const qualityLevels = Object.keys(DORM_CFG.qualityLevels)
+  if (!qualityLevels.includes(quality)) {
+    return { success: false, message: '房间等级无效', state }
+  }
+
+  const cost = DORM_CFG.roomCost * (qualityLevels.indexOf(quality) + 1)
+  if (state.money < cost) {
+    return { success: false, message: `资金不足，需 ¥${cost}`, state }
+  }
+
+  const newRoomId = `room_${Date.now()}`
+  const roomNum = state.dormitory.length + 1
+  const dormitory = [
+    ...state.dormitory,
+    {
+      id: newRoomId,
+      name: `${roomNum}号房`,
+      quality,
+      occupantIds: [],
+    },
+  ]
+
+  const logs = [
+    ...state.logs,
+    {
+      day: state.day,
+      text: `🏗️ 新建${DORM_CFG.qualityLevels[quality].label}「${roomNum}号房」，花费 ¥${cost}。`,
+    },
+  ]
+
+  return {
+    success: true,
+    state: {
+      ...state,
+      dormitory,
+      logs,
+      money: state.money - cost,
+      totalExpenses: state.totalExpenses + cost,
+    },
+  }
+}
+
+function generateRoommateEvent(room, trainees, relationships, day) {
+  if (room.occupantIds.length < 2) return null
+  if (Math.random() > DORM_CFG.roommateEvents.dailyChance) return null
+
+  const quality = DORM_CFG.qualityLevels[room.quality]
+  let adjustedChance = DORM_CFG.roommateEvents.dailyChance
+  adjustedChance += quality.relationshipBonus * 0.01
+
+  if (Math.random() > adjustedChance) return null
+
+  const types = Object.entries(DORM_CFG.roommateEvents.types).map(([key, val]) => ({
+    key,
+    ...val,
+  }))
+  const picked = weightedPick(types)
+
+  const occupants = room.occupantIds
+    .map((id) => trainees.find((t) => t.id === id))
+    .filter((t) => t && t.status !== 'left')
+
+  if (occupants.length < 2) return null
+
+  const [a, b] = [pickRandom(occupants), pickRandom(occupants.filter((t) => t.id !== occupants[0].id))]
+  const curRel = getRelationship(relationships, a.id, b.id)
+
+  const event = {
+    type: picked.key,
+    label: picked.label,
+    description: picked.description,
+    roomName: room.name,
+    day,
+    participants: [a, b],
+    resolved: false,
+  }
+
+  if (picked.relGain) {
+    event.relGain = randInt(picked.relGain[0], picked.relGain[1]) + quality.relationshipBonus
+  }
+  if (picked.fatigueCost) {
+    event.fatigueCost = randInt(picked.fatigueCost[0], picked.fatigueCost[1])
+  }
+  if (picked.stressGain) {
+    event.stressGain = randInt(picked.stressGain[0], picked.stressGain[1])
+  }
+  if (picked.statBoostRange) {
+    event.statBoostRange = [picked.statBoostRange[0], picked.statBoostRange[1]]
+    event.statKey = pickRandom(CFG.stats)
+  }
+
+  if (curRel >= CFG.relationships.synergyThreshold && event.relGain < 0) {
+    event.relGain = Math.round(event.relGain * 0.5)
+  }
+
+  return event
+}
+
+function applyRoommateEvent(event, trainees, relationships, logs, day) {
+  const relGain = event.relGain || 0
+  if (event.participants && event.participants.length === 2) {
+    const [a, b] = event.participants
+    const traineeA = trainees.find((t) => t.id === a.id)
+    const traineeB = trainees.find((t) => t.id === b.id)
+    if (traineeA && traineeB) {
+      setRelationship(relationships, traineeA.id, traineeB.id, getRelationship(relationships, traineeA.id, traineeB.id) + relGain)
+
+      if (event.fatigueCost) {
+        traineeA.fatigue = clamp(traineeA.fatigue + event.fatigueCost, 0, 100)
+        traineeB.fatigue = clamp(traineeB.fatigue + event.fatigueCost, 0, 100)
+      }
+      if (event.stressGain) {
+        traineeA.stress = clamp(traineeA.stress + event.stressGain, 0, 100)
+        traineeB.stress = clamp(traineeB.stress + event.stressGain, 0, 100)
+      }
+      if (event.statBoostRange && event.statKey) {
+        const boost = randInt(event.statBoostRange[0], event.statBoostRange[1])
+        traineeA.stats[event.statKey] = clamp(traineeA.stats[event.statKey] + boost, 0, CFG.thresholds.statCap)
+        traineeB.stats[event.statKey] = clamp(traineeB.stats[event.statKey] + boost, 0, CFG.thresholds.statCap)
+      }
+
+      const relText = relGain >= 0 ? `关系+${relGain}` : `关系${relGain}`
+      const detailParts = [relText]
+      if (event.fatigueCost) detailParts.push(`疲劳+${event.fatigueCost}`)
+      if (event.stressGain) detailParts.push(event.stressGain >= 0 ? `压力+${event.stressGain}` : `压力${event.stressGain}`)
+      if (event.statBoostRange && event.statKey) detailParts.push(`${CFG.statLabels[event.statKey]}提升`)
+
+      logs.push({
+        day,
+        text: `🏨【${event.label}】${traineeA.name} & ${traineeB.name}（${event.roomName}）：${event.description}（${detailParts.join('，')}）`,
+      })
+    }
+  }
+}
+
+function applyDormitoryRecovery(trainees, dormitory, logs, day) {
+  const effects = {}
+
+  for (const trainee of trainees) {
+    if (trainee.status === 'left') continue
+
+    const room = getTraineeRoom(dormitory, trainee.id)
+    if (!room) continue
+
+    const quality = DORM_CFG.qualityLevels[room.quality]
+    const fatigueRecovery = randInt(quality.fatigueRecovery[0], quality.fatigueRecovery[1])
+    const stressRecovery = randInt(quality.stressRecovery[0], quality.stressRecovery[1])
+
+    trainee.fatigue = clamp(trainee.fatigue - fatigueRecovery, 0, 100)
+    trainee.stress = clamp(trainee.stress - stressRecovery, 0, 100)
+
+    let bonus = 0
+    const roommateIds = room.occupantIds.filter((id) => id !== trainee.id)
+    for (const rmId of roommateIds) {
+      const rel = getRelationship(dormitory, trainee.id, rmId) || 0
+      if (rel >= CFG.relationships.synergyThreshold) {
+        bonus += 1
+      }
+    }
+    if (bonus > 0) {
+      const extraRecovery = bonus * randInt(1, 2)
+      trainee.stress = clamp(trainee.stress - extraRecovery, 0, 100)
+    }
+
+    const restBonus = trainee.fatigue <= 25 ? 'wellRested' : trainee.fatigue >= 70 ? 'exhausted' : 'normal'
+    effects[trainee.id] = {
+      fatigueRecovery,
+      stressRecovery,
+      restBonus,
+      harmoniousBonus: bonus > 0,
+    }
+  }
+
+  return effects
+}
+
+export function calcScheduleSynergyMultiplier(trainee, dormitory, relationships) {
+  let mult = 1
+  const synergy = DORM_CFG.scheduleSynergy
+
+  const room = getTraineeRoom(dormitory, trainee.id)
+  if (!room) return mult
+
+  const quality = DORM_CFG.qualityLevels[room.quality]
+  const baseRecovery = (quality.fatigueRecovery[0] + quality.fatigueRecovery[1]) / 2
+  const qualityMult = 1 + baseRecovery * 0.01
+  mult *= qualityMult
+
+  const roommateIds = room.occupantIds.filter((id) => id !== trainee.id)
+  let harmonious = false
+  for (const rmId of roommateIds) {
+    const rel = getRelationship(relationships, trainee.id, rmId) || 0
+    if (rel >= CFG.relationships.synergyThreshold) {
+      harmonious = true
+      break
+    }
+  }
+  if (harmonious) {
+    mult *= 1 + synergy.harmoniousRoommateBonus
+  }
+
+  return mult
+}
+
+function injectDormitoryEffectsIntoProcessDay(state) {
+  const { dormitory, dormEffects } = state
+  if (!dormitory) return {}
+
+  const effects = {}
+  for (const trainee of state.trainees) {
+    if (trainee.status === 'left') continue
+    const eff = dormEffects?.[trainee.id]
+    if (eff) {
+      let mult = 1
+      if (eff.restBonus === 'wellRested') {
+        mult += DORM_CFG.scheduleSynergy.wellRestedBonus
+      } else if (eff.restBonus === 'exhausted') {
+        mult -= DORM_CFG.scheduleSynergy.exhaustedPenalty
+      }
+      if (eff.harmoniousBonus) {
+        mult += DORM_CFG.scheduleSynergy.harmoniousRoommateBonus
+      }
+      effects[trainee.id] = mult
+    }
+  }
+  return effects
 }

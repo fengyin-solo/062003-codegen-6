@@ -10,6 +10,12 @@ import {
   calcProfit,
   calcTraineeScore,
   getRelationship,
+  assignRoom,
+  upgradeRoom,
+  addRoom,
+  getTraineeRoom,
+  getRoommates,
+  calcScheduleSynergyMultiplier,
 } from '../utils/gameLogic'
 import { saveToSlot } from '../utils/storage'
 
@@ -112,6 +118,53 @@ export function useGame() {
     return getRelationship(state.value.relationships, idA, idB)
   }
 
+  function handleAssignRoom(traineeId, roomId) {
+    if (!state.value) return { success: false, message: '游戏未开始' }
+    const result = assignRoom(state.value, traineeId, roomId)
+    if (result.success) {
+      state.value = result.state
+      autoSave()
+    }
+    return result
+  }
+
+  function handleUpgradeRoom(roomId, newQuality) {
+    if (!state.value) return { success: false, message: '游戏未开始' }
+    const result = upgradeRoom(state.value, roomId, newQuality)
+    if (result.success) {
+      state.value = result.state
+      autoSave()
+    }
+    return result
+  }
+
+  function handleAddRoom(quality = 'basic') {
+    if (!state.value) return { success: false, message: '游戏未开始' }
+    const result = addRoom(state.value, quality)
+    if (result.success) {
+      state.value = result.state
+      autoSave()
+    }
+    return result
+  }
+
+  function getTraineeDormRoom(traineeId) {
+    if (!state.value) return null
+    return getTraineeRoom(state.value.dormitory, traineeId)
+  }
+
+  function getTraineeRoommates(traineeId) {
+    if (!state.value) return []
+    return getRoommates(state.value.dormitory, traineeId)
+  }
+
+  function getDormSynergy(traineeId) {
+    if (!state.value) return 1
+    const trainee = state.value.trainees.find((t) => t.id === traineeId)
+    if (!trainee) return 1
+    return calcScheduleSynergyMultiplier(trainee, state.value.dormitory, state.value.relationships)
+  }
+
   return {
     state,
     currentSlot,
@@ -134,5 +187,11 @@ export function useGame() {
     getRatingResults: () => (state.value ? getRatingResults(state.value) : []),
     calcTraineeScore,
     autoSave,
+    handleAssignRoom,
+    handleUpgradeRoom,
+    handleAddRoom,
+    getTraineeDormRoom,
+    getTraineeRoommates,
+    getDormSynergy,
   }
 }

@@ -27,6 +27,9 @@
     @debut="onDebut"
     @resolve-poaching="handlePoaching"
     @release-single="onReleaseSingle"
+    @assign-room="onAssignRoom"
+    @upgrade-room="onUpgradeRoom"
+    @add-room="onAddRoom"
   />
 </template>
 
@@ -60,6 +63,9 @@ const {
   backToMenu,
   getRatingResults,
   calcTraineeScore,
+  handleAssignRoom,
+  handleUpgradeRoom,
+  handleAddRoom,
 } = useGame()
 
 onMounted(() => {
@@ -94,6 +100,55 @@ function onDebut(memberIds, groupName, callback) {
 function onReleaseSingle(groupId) {
   const result = handleReleaseSingle(groupId)
   if (result && !result.success) {
+    alert(result.message)
+  }
+}
+
+function showToast(msg) {
+  if (!window.__toastTimer) {
+    const gameView = document.querySelector('.game-view')
+    if (gameView) {
+      let toast = gameView.querySelector('.dorm-toast')
+      if (!toast) {
+        toast = document.createElement('div')
+        toast.className = 'dorm-toast'
+        toast.style.cssText = `
+          position: fixed; bottom: 2rem; left: 50%; transform: translateX(-50%);
+          background: var(--bg-card); border: 1px solid var(--accent);
+          padding: 0.75rem 1.5rem; border-radius: 8px; z-index: 300;
+          box-shadow: var(--shadow); opacity: 0; transition: opacity 0.3s;
+          pointer-events: none;
+        `
+        gameView.appendChild(toast)
+      }
+      toast.textContent = msg
+      toast.style.opacity = '1'
+      clearTimeout(window.__toastTimer)
+      window.__toastTimer = setTimeout(() => {
+        toast.style.opacity = '0'
+        window.__toastTimer = null
+      }, 2500)
+    }
+  }
+}
+
+function onAssignRoom(traineeId, roomId) {
+  const result = handleAssignRoom(traineeId, roomId)
+  if (result && !result.success && result.message) {
+    alert(result.message)
+  }
+}
+
+function onUpgradeRoom(roomId, quality) {
+  const result = handleUpgradeRoom(roomId, quality)
+  if (result && !result.success && result.message) {
+    alert(result.message)
+  }
+}
+
+function onAddRoom(quality) {
+  const result = handleAddRoom(quality)
+  if (result && !result.success && result.message) {
     alert(result.message)
   }
 }
