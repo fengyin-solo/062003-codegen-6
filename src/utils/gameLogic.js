@@ -9,6 +9,9 @@ export function createInitialGameState() {
   for (let i = 0; i < CFG.initial.traineeCount; i++) {
     trainees.push(createTrainee(names[i], i))
   }
+  const relationships = initRelationships(trainees)
+  const dormitory = initDormitory(trainees)
+  const dormEffects = calcDormEffects(trainees, dormitory, relationships)
   return {
     day: 1,
     money: CFG.initial.money,
@@ -17,15 +20,15 @@ export function createInitialGameState() {
     totalExpenses: 0,
     trainees,
     groups: [],
-    relationships: initRelationships(trainees),
+    relationships,
     schedule: {},
     logs: [{ day: 1, text: '事务所成立！五位练习生已就位，三年征途正式开始。' }],
     pendingEvent: null,
     pendingRating: false,
     gameStatus: 'playing',
     lastSingleDay: {},
-    dormitory: initDormitory(trainees),
-    dormEffects: {},
+    dormitory,
+    dormEffects,
   }
 }
 
@@ -290,7 +293,7 @@ export function processDay(state) {
     }
   }
 
-  const newDormEffects = applyDormitoryRecovery(trainees, dormitory, logs, state.day)
+  const newDormEffects = applyDormitoryRecovery(trainees, dormitory, relationships, logs, state.day)
 
   const newDay = state.day + 1
   const pendingRating = state.day % CFG.rating.interval === 0
@@ -756,11 +759,9 @@ export function addRoom(state, quality = 'basic') {
 
 function generateRoommateEvent(room, trainees, relationships, day) {
   if (room.occupantIds.length < 2) return null
-  if (Math.random() > DORM_CFG.roommateEvents.dailyChance) return null
 
   const quality = DORM_CFG.qualityLevels[room.quality]
-  let adjustedChance = DORM_CFG.roommateEvents.dailyChance
-  adjustedChance += quality.relationshipBonus * 0.01
+  const adjustedChance = DORM_CFG.roommateEvents.dailyChance + quality.relationshipBonus * 0.01
 
   if (Math.random() > adjustedChance) return null
 
@@ -776,7 +777,11 @@ function generateRoommateEvent(room, trainees, relationships, day) {
 
   if (occupants.length < 2) return null
 
-  const [a, b] = [pickRandom(occupants), pickRandom(occupants.filter((t) => t.id !== occupants[0].id))]
+  const a = pickRandom(occupants)
+  const otherOccupants = occupants.filter((t) => t.id !== a.id)
+  if (otherOccupants.length === 0) return null
+  const b = pickRandom(otherOccupants)
+
   const curRel = getRelationship(relationships, a.id, b.id)
 
   const event = {
@@ -803,8 +808,12 @@ function generateRoommateEvent(room, trainees, relationships, day) {
     event.statKey = pickRandom(CFG.stats)
   }
 
-  if (curRel >= CFG.relationships.synergyThreshold && event.relGain < 0) {
-    event.relGain = Math.round(event.relGain * 0.5)
+  if (curRel >= CFG.relationships.synergyThreshold) {
+    if (event.relGain > 0) {
+      event.relGain = Math.round(event.relGain * 1.3)
+    } else if (event.relGain < 0) {
+      event.relGain = Math.round(event.relGain * 0.5)
+    }
   }
 
   return event
@@ -847,7 +856,7 @@ function applyRoommateEvent(event, trainees, relationships, logs, day) {
   }
 }
 
-function applyDormitoryRecovery(trainees, dormitory, logs, day) {
+function applyDormitoryRecovery(trainees, dormitory, relationships, logs, day) {
   const effects = {}
 
   for (const trainee of trainees) {
@@ -866,7 +875,7 @@ function applyDormitoryRecovery(trainees, dormitory, logs, day) {
     let bonus = 0
     const roommateIds = room.occupantIds.filter((id) => id !== trainee.id)
     for (const rmId of roommateIds) {
-      const rel = getRelationship(dormitory, trainee.id, rmId) || 0
+      const rel = getRelationship(relationships, trainee.id, rmId) || 0
       if (rel >= CFG.relationships.synergyThreshold) {
         bonus += 1
       }
@@ -874,12 +883,46 @@ function applyDormitoryRecovery(trainees, dormitory, logs, day) {
     if (bonus > 0) {
       const extraRecovery = bonus * randInt(1, 2)
       trainee.stress = clamp(trainee.stress - extraRecovery, 0, 100)
+      logs.push({
+        day,
+        text: `🤝 ${trainee.name} 与室友关系默契，额外恢复压力 ${extraRecovery}。`,
+      })
     }
 
     const restBonus = trainee.fatigue <= 25 ? 'wellRested' : trainee.fatigue >= 70 ? 'exhausted' : 'normal'
     effects[trainee.id] = {
       fatigueRecovery,
       stressRecovery,
+      restBonus,
+      harmoniousBonus: bonus > 0,
+    }
+  }
+
+  return effects
+}
+
+function calcDormEffects(trainees, dormitory, relationships) {
+  const effects = {}
+
+  for (const trainee of trainees) {
+    if (trainee.status === 'left') continue
+
+    const room = getTraineeRoom(dormitory, trainee.id)
+    if (!room) continue
+
+    let bonus = 0
+    const roommateIds = room.occupantIds.filter((id) => id !== trainee.id)
+    for (const rmId of roommateIds) {
+      const rel = getRelationship(relationships, trainee.id, rmId) || 0
+      if (rel >= CFG.relationships.synergyThreshold) {
+        bonus += 1
+      }
+    }
+
+    const restBonus = trainee.fatigue <= 25 ? 'wellRested' : trainee.fatigue >= 70 ? 'exhausted' : 'normal'
+    effects[trainee.id] = {
+      fatigueRecovery: 0,
+      stressRecovery: 0,
       restBonus,
       harmoniousBonus: bonus > 0,
     }
